@@ -1,0 +1,751 @@
+openapi: 3.0.3
+info:
+  version: '1.0.0'
+  title: Agera med digital fullmakt
+  contact:
+    name: Mina ombud
+    url: https://minaombud.se
+  description: |
+    # API to find and act with digital power of attorney
+    Abbreviation: Power of Attorney = PoA
+
+    ## Null
+
+    Attribute which isn't mandatory (not marked as `required`) should be be serialized
+    to JSON as null. No fields are `nullable` in this OpenAPI-specification.
+
+    ### Jackson (databind)
+
+    In [Jackson](https://github.com/FasterXML/jackson-databind) can null-serialization be turned off
+    with [JsonInclude.Include.NON_NULL](https://fasterxml.github.io/jackson-annotations/javadoc/2.12/com/fasterxml/jackson/annotation/JsonInclude.Include.html#NON_NULL).
+    ```java
+    var mapper = new ObjectMapper()
+      .setSerializationInclusion(JsonInclude.Include.NON_NULL);
+    ```
+
+    ### GSON, JSON-B (JSR 367)
+
+    [GSON](https://github.com/google/gson) and [JSON-B](https://javaee.github.io/jsonb-spec/index.html)
+    does as standard not serialize null-fields.
+
+    --------------------------------------------------------------------------
+    ### Documentation
+    Future storage for service and technical documentation:
+
+externalDocs:
+  description: Documentation for developers
+  url: https://developer.minaombud.se/
+
+servers:
+- url: /dfm/formedlare/v1
+- url: https://fullmakt.minaombud.se/dfm/formedlare/v1
+  description: Production
+- url: https://fullmakt-accept.minaombud.se/dfm/formedlare/v1
+  description: Acceptance test
+- url: https://fullmakt-system.minaombud.se/dfm/formedlare/v1
+  description: System test
+
+security:
+- BearerAuth: []
+- OAuth2: ['fullmakt:hamta']
+
+tags:
+- name: fullmakter
+  description: Find and act with digital PoA
+
+paths:
+  /tredjeman/{tredjeman}/fullmakter/{fullmakt}:
+    parameters:
+    - name: tredjeman
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Organisationsnummer'
+    - name: fullmakt
+      in: path
+      required: true
+      description: The PoA which is requested
+      schema:
+        $ref: '#/components/schemas/FullmaktId'
+    get:
+      summary: Fetch PoA from third party
+      operationId: hamtaFullmakt
+      security:
+      - OAuth2: ['fullmakt:hamta']
+      tags:
+      - fullmakter
+      responses:
+        '200':
+          description: Power of Attorney
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FullmaktMetadataResponse'
+        '404':
+          description: Third party or PoA missing
+
+    delete:
+      summary: Delete PoA
+      description: |
+        Deletes a valid PoA.
+        Requester is considered the one deleting the PoA.
+      tags:
+      - fullmakter
+      security:
+      - OAuth2: ['fullmakt:aterkalla']
+      operationId: taBortFullmakt
+      responses:
+        '204':
+          description: PoA was deleted.
+
+  /sok/behorigheter:
+    post:
+      operationId: hamtaBehorigheter
+      summary: Fetch authorization from third party
+      description: |
+        Fetches the autorities that exist according to valid PoA for attorney-in-fact (user).
+      tags:
+      - fullmakter
+      security:
+      - OAuth2: ['fullmakt:hamta']
+      requestBody:
+        required: true
+        description: Search parameters
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HamtaBehorigheterRequest'
+      responses:
+        '200':
+          description: List with valid authorities
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HamtaBehorigheterResponse'
+components:
+  securitySchemes:
+    OAuth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: /oauth2/token
+          scopes:
+            fullmakt:hamta: Authority to use API:s to fetch PoA
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Bearer token
+  schemas:
+    Organisationsnummer:
+      type: string
+      pattern: '^\d{10}$'
+      description: Organisation id for legal entity
+      example: '9165956591'
+
+    FullmaktId:
+      type: string
+      format: uuid
+      description: Unique id for PoA.
+      example: 'bf31188a-bfbb-4f23-a60a-89c75d009b53'
+
+    FullmaktMallId:
+      type: string
+      #format: uuid
+      #minLength: 36
+      #maxLength: 36
+      description: Unique id for PoA template per producer. Format to be defined.
+      example: 'styrelse'
+
+    FullmaktUrsprung:
+      title: FullmaktUrsprung
+      type: object
+      description: |
+        Reference to a template and for PoA based on transport-PoA.
+      properties:
+        mall:
+          $ref: '#/components/schemas/FullmaktMallId'
+        fullmakt:
+          $ref: '#/components/schemas/FullmaktId'
+      required: [mall]
+    Identitetsnummer:
+      type: string
+      minLength: 1
+      description: |
+        Personal id, organisation id, etc.
+
+        No binders (-) for id's.
+
+    Identitetstyp:
+      type: string
+      description: |
+        Type of identity
+        | Typ     | Identitet        | Comment    |
+        |---------|------------------|------------|
+        | `pnr`   | Personal id      | 12 digits  |
+        | `orgnr` | Organisation id  | 10 digits (no 16-prefix). Note: *NOT* used for 'enskilda näringsidkare', where personal id is used. |
+        | `samnr` | Samordning id    | 12 digits  |
+        | `gdnr`  | GD-id            | 10 digits  |
+
+    Identitetsbeteckning:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/Identitetsnummer'
+        typ:
+          $ref: '#/components/schemas/Identitetstyp'
+      required: [id, typ]
+      discriminator:
+        propertyName: typ
+        mapping:
+          pnr: '#/components/schemas/Identitetsbeteckning'
+          orgnr: '#/components/schemas/Identitetsbeteckning'
+          samnr: '#/components/schemas/Identitetsbeteckning'
+          gdnr: '#/components/schemas/Identitetsbeteckning'
+          username: '#/components/schemas/Identitetsbeteckning'
+
+    ForNamn:
+      type: string
+      minLength: 1
+      maxLength: 255
+      description: A name.
+
+    Namn:
+      type: string
+      minLength: 1
+      maxLength: 255
+      description: A name.
+
+    Namngiven:
+      type: object
+      title: Namngiven
+      properties:
+        fornamn:
+          $ref: '#/components/schemas/ForNamn'
+        namn:
+          $ref: '#/components/schemas/Namn'
+      required: [namn]
+    NamnIdentitet:
+      title: NamnIdentitet
+      allOf:
+      - $ref: '#/components/schemas/Identitetsbeteckning'
+      - $ref: '#/components/schemas/Namngiven'
+      discriminator:
+        propertyName: typ
+        mapping:
+          pnr: '#/components/schemas/NamnIdentitet'
+          orgnr: '#/components/schemas/NamnIdentitet'
+          samnr: '#/components/schemas/NamnIdentitet'
+          gdnr: '#/components/schemas/NamnIdentitet'
+          username: '#/components/schemas/NamnIdentitet'
+
+    FullmaktsgivareRoll:
+      description: States if a PoA was issued as a individual or organisation.
+      type: string
+      enum:
+      - PRIVAT
+      - ORGANISATION
+
+    FullmaktsgivareId:
+      title: FullmaktsgivareId
+      allOf:
+      - $ref: '#/components/schemas/Identitetsbeteckning'
+      - type: object
+        title: FullmaktsgivareExtId
+        properties:
+          roll:
+            $ref: '#/components/schemas/FullmaktsgivareRoll'
+        required: [roll]
+      discriminator:
+        propertyName: typ
+        mapping:
+          pnr: '#/components/schemas/FullmaktsgivareId'
+          orgnr: '#/components/schemas/FullmaktsgivareId'
+          samnr: '#/components/schemas/FullmaktsgivareId'
+          gdnr: '#/components/schemas/FullmaktsgivareId'
+
+    Fullmaktsgivare:
+      allOf:
+      - $ref: '#/components/schemas/FullmaktsgivareId'
+      - $ref: '#/components/schemas/Namngiven'
+      discriminator:
+        propertyName: typ
+        mapping:
+          pnr: '#/components/schemas/Fullmaktsgivare'
+          orgnr: '#/components/schemas/Fullmaktsgivare'
+          samnr: '#/components/schemas/Fullmaktsgivare'
+          gdnr: '#/components/schemas/Fullmaktsgivare'
+
+    Fullmaktshavare:
+      allOf:
+      - $ref: '#/components/schemas/NamnIdentitet'
+      discriminator:
+        propertyName: typ
+        mapping:
+          pnr: '#/components/schemas/Fullmaktshavare'
+          orgnr: '#/components/schemas/Fullmaktshavare'
+          samnr: '#/components/schemas/Fullmaktshavare'
+          gdnr: '#/components/schemas/Fullmaktshavare'
+
+    Tredjeman:
+      title: Tredjeman
+      description: |
+        Legal entity with identity and name.
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/Organisationsnummer'
+        namn:
+          $ref: '#/components/schemas/Namn'
+      required: [id, namn]
+    FysiskPerson:
+      title: FysiskPerson
+      allOf:
+      - $ref: '#/components/schemas/NamnIdentitet'
+      discriminator:
+        propertyName: typ
+        mapping:
+          pnr: '#/components/schemas/FysiskPerson'
+          samnr: '#/components/schemas/FysiskPerson'
+          gdnr: '#/components/schemas/FysiskPerson'
+
+    JuridiskPerson:
+      title: JuridiskPerson
+      allOf:
+      - $ref: '#/components/schemas/NamnIdentitet'
+      discriminator:
+        propertyName: typ
+        mapping:
+          orgnr: '#/components/schemas/JuridiskPerson'
+
+    FullmaktSignatar:
+      description: |
+        Part that should sign the PoA.
+
+        Attribute 'fysiskPerson' is used when an individual signs for her own sake.
+
+        Attribute `juridiskPerson` is used when a representative for a legal entity should sign.
+        When a person signs as a representative of a legal entity
+        then the attribute `juridiskPerson` indicates the legal entity
+        for individual being represented. The individual can occur several
+        times as a signatory but as a representative of various legal entities.
+
+      type: object
+      title: FullmaktSignatar
+      properties:
+        fysiskPerson:
+          $ref: '#/components/schemas/FysiskPerson'
+        juridiskSignatar:
+          type: object
+          title: FullmaktJuridiskSignatar
+          properties:
+            juridiskPerson:
+              $ref: '#/components/schemas/JuridiskPerson'
+            foretradare:
+              type: array
+              items:
+                $ref: '#/components/schemas/FysiskPerson'
+          required: [juridiskPerson, foretradare]
+    BehorighetKod:
+      type: string
+      pattern: '^[\u0021-\u007e\u00a1-\u00ff]*$'
+      minLength: 1
+      maxLength: 255
+      description: Unique code for an authority.
+      example: '3fa85f64-5717-4562-b3fc-2c963f66afa6'
+
+    BehorighetTypConstraint:
+      type: string
+      description: |
+        Type of authority being described (active vs passive)
+
+      minLength: 1
+      maxLength: 255
+      pattern: '^[a-zA-Z0-9_.-]*$'
+      example: aktiv
+
+    BehorighetTyp:
+      description: |
+        Decribes a level that can be selected for a authority.
+      title: BehorighetTyp
+      type: object
+      properties:
+        typ:
+          $ref: '#/components/schemas/BehorighetTypConstraint'
+        rubrik:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Header for type of authority
+        beskrivning:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: |
+            Additional description for type of authority.
+
+        vald:
+          type: boolean
+          description: |
+            States if the type of authority is selected.
+
+            Only one type of authority can be selected for a authority.
+        niva:
+          type: integer
+          description: |
+            Priority between types of authority to ensure that transport PoA never can
+            pass on more authorities but pass on less authorities
+            (passive to active not ok, but vice-verse is ok)
+
+      required: [typ, rubrik, vald, niva]
+    Behorighetsobjekt:
+      type: object
+      description: |
+        Describes authority for a attorney-in-fact in a PoA.
+      properties:
+        kod:
+          $ref: '#/components/schemas/BehorighetKod'
+        rubrik:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Header on a authority objekt
+        typer:
+          type: array
+          items:
+            $ref: '#/components/schemas/BehorighetTyp'
+          minItems: 1
+      required: [kod, typer]
+    Behorighet:
+      type: object
+      description: |
+        Describes authority for a attorney-in-fact in a PoA.
+      properties:
+        behorighetsobjekt:
+          $ref: '#/components/schemas/Behorighetsobjekt'
+      required: [behorighetsobjekt]
+    JwsSig:
+      title: JwsSig
+      type: object
+      properties:
+        protected:
+          type: string
+          format: base64url
+          description: JWS Protected Header
+        header:
+          type: object
+          description: JWS Unprotected Header
+          additionalProperties: true
+        signature:
+          type: string
+          format: base64url
+      required:
+      - signature
+
+    Fullmakt:
+      type: object
+      description: |
+        Defines the authority a attorney-in-fact have to represent a grantor at third party.
+      properties:
+        id:
+          $ref: '#/components/schemas/FullmaktId'
+        ursprung:
+          $ref: '#/components/schemas/FullmaktUrsprung'
+        rubrik:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Header on PoA.
+          example: Rapportera utsläpp
+        beskrivning:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Description of PoA.
+          example: Rapportera utsläpp
+
+        giltigFrom:
+          type: string
+          format: date
+          description: Date PoA is valid from.
+          #example: '2021-02-10'
+
+        giltigTom:
+          type: string
+          format: date
+          description: Last valid date for PoA.
+          example:
+
+        skapare:
+          $ref: '#/components/schemas/NamnIdentitet'
+        skapadTidpunkt:
+          type: string
+          format: date-time
+          description: Date and time when PoA was created.
+
+        transportfullmakt:
+          description: States if a PoA is a transport PoA.
+          type: boolean
+          example: false
+
+        fullmaktsgivare:
+          $ref: '#/components/schemas/Fullmaktsgivare'
+        fullmaktshavare:
+          type: array
+          items:
+            $ref: '#/components/schemas/Fullmaktshavare'
+        tredjeman:
+          $ref: '#/components/schemas/Tredjeman'
+        signatarer:
+          description: |
+            For a sent and approved PoA, the persons who have signed the PoA.
+            The parties that have (send and approved) or intend to sign the PoA (still in draft)
+
+            These should be part of the signatory when being sent in.
+          type: array
+          minItems: 0
+          items:
+            $ref: '#/components/schemas/FullmaktSignatar'
+        behorigheter:
+          description: Authority that the PoA give.
+          type: array
+          items:
+            $ref: '#/components/schemas/Behorighet'
+          minItems: 1
+
+        _sig:
+          $ref: '#/components/schemas/JwsSig'
+      required:
+      - id
+      - ursprung
+      - rubrik
+      - beskrivning
+      - giltigFrom
+      - transportfullmakt
+      - fullmaktsgivare
+      - fullmaktshavare
+      - tredjeman
+      - behorigheter
+      - signatarer
+      - skapare
+      - skapadTidpunkt
+
+    DatumPerson:
+      description: Container for a event that is conected to person and date.
+      type: object
+      properties:
+        datum:
+          type: string
+          format: date-time
+          description: Date and time for event.
+        person:
+          $ref: '#/components/schemas/NamnIdentitet'
+      required: [datum, person]
+    FullmaktMetadata:
+      type: object
+      properties:
+        referensnummer:
+          type: string
+          minLength: 1
+          maxLength: 150
+          description: |
+            This reference should be used to communicate with customer and third party.
+            Is shown after submit of PoA. Is unique for all PoA.
+            MOP -> grantor individual
+            MOF -> grantor organisation
+
+          example: 'MOF1234567890  , MOF0000000001 , MOP0000000001'
+        registreringstidpunkt:
+          type: string
+          format: date-time
+          description: Date and time when PoA was registered
+          example: '2021-01-10'
+        aterkallad:
+          $ref: '#/components/schemas/DatumPerson'
+    Loggpost:
+      title: Loggpost
+      type: object
+      properties:
+        tidpunkt:
+          description: Time for event
+          type: string
+          format: date-time
+        handelse:
+          description: Event code
+          type: string
+        text:
+          description: Description of event
+          type: string
+        anvandare:
+          $ref: '#/components/schemas/NamnIdentitet'
+      required: [tidpunkt, handelse, text, anvandare]
+    FullmaktMetadataResponse:
+      type: object
+      title: FullmaktMetadataResponse
+      properties:
+        fullmakt:
+          $ref: '#/components/schemas/Fullmakt'
+        metadata:
+          $ref: '#/components/schemas/FullmaktMetadata'
+        logg:
+          type: array
+          items:
+            $ref: '#/components/schemas/Loggpost'
+      required: [fullmakt, metadata]
+    PageNumberParameter:
+      type: integer
+      format: int32
+      minimum: 0
+      description: 0-based page number for pagination (page-parameter)
+      example: 0
+
+    PageSizeParameter:
+      type: integer
+      format: int32
+      minimum: 1
+      description: Size on pages for pagination (size-parameter).
+      example: 20
+
+    PageParameters:
+      description: |
+        Parameters for page requests.
+      type: object
+      properties:
+        page:
+          $ref: '#/components/schemas/PageNumberParameter'
+        size:
+          $ref: '#/components/schemas/PageSizeParameter'
+    HamtaBehorigheterRequest:
+      title: HamtaBehorigheterRequest
+      type: object
+      description: |
+        Search on attorney-in-fact of PoA and can be filtered on grantor.
+
+        Searches through mediated service can be filtered on third party.
+      properties:
+        fullmaktshavare:
+          $ref: '#/components/schemas/Identitetsbeteckning'
+        fullmaktsgivare:
+          $ref: '#/components/schemas/FullmaktsgivareId'
+        tredjeman:
+          $ref: '#/components/schemas/Organisationsnummer'
+        behorigheter:
+          description: Possibility to filter on subset of authorities.
+            To not limit search, use an empty array.
+
+          type: array
+          items:
+            $ref: '#/components/schemas/BehorighetKod'
+          minItems: 0
+          example:
+          - kod1
+          - kod2
+        page:
+          $ref: '#/components/schemas/PageParameters'
+      required: [fullmaktshavare, tredjeman, behorigheter]
+    UtdeladBehorighet:
+      title: UtdeladBehorighet
+      description: |
+        Authority for attorney-in-fact at grantor of PoA.
+
+        Attribute 'kod' identifies authority, 'typ' states if authority is 'aktiv' (active) or 'passiv' (passive)
+        and the attribute 'fullmakt' is a reference to the PoA where the authority originates from.
+
+        If several PoA gives the same authority,
+        the authority which is 'aktiv' is granted and 'passiv' is not returned
+
+        If several PoA gives the same authority including type,
+        the authority with the latest valid from date is selected.
+
+        PoA which is not valid during time for request is not considered.
+
+        Exemple:
+        | fullmakt | kod | type    | giltigFrom |
+        |----------|-----|---------|------------|
+        | 1        | x   | passiv  | 2021-01-01 |
+        | 2        | x   | aktiv   | 2021-02-01 |
+        | 3        | x   | passiv  | 2021-03-01 |
+
+        Above three PoA gives final authority:
+        ```json
+        {
+          "kod": "x",
+          "typ": "aktiv",
+          "fullmakt": "2"
+        }
+        ```
+
+      type: object
+      properties:
+        kod:
+          $ref: '#/components/schemas/BehorighetKod'
+        typ:
+          $ref: '#/components/schemas/BehorighetTypConstraint'
+        fullmakt:
+          $ref: '#/components/schemas/FullmaktId'
+      required: [kod, typ, fullmakt]
+    Behorighetskontext:
+      type: object
+      properties:
+        fullmaktsgivare:
+          $ref: '#/components/schemas/Fullmaktsgivare'
+        fullmaktshavare:
+          type: array
+          items:
+            $ref: '#/components/schemas/Identitetsbeteckning'
+          minItems: 1
+        tredjeman:
+          $ref: '#/components/schemas/Organisationsnummer'
+        behorigheter:
+          type: array
+          items:
+            $ref: '#/components/schemas/UtdeladBehorighet'
+          minItems: 1
+        _sig:
+          $ref: '#/components/schemas/JwsSig'
+      required: [fullmaktsgivare, fullmaktshavare, tredjeman, behorigheter, _sig]
+    PageMetadata:
+      description: |
+        Object being returned together with paginated collections.
+      type: object
+      properties:
+        size:
+          type: integer
+          format: int32
+          description: Number of elements per page
+          example: 20
+        number:
+          type: integer
+          format: int32
+          description: Page number
+          example: 0
+        totalElements:
+          type: integer
+          format: int64
+          description: Total number of elements
+          example: 101
+        totalPages:
+          type: integer
+          format: int64
+          description: Total number of pages
+          example: 6
+    HamtaBehorigheterResponse:
+      title: HamtaBehorigheterResponse
+      description: |
+        Array with authorities at third party, including information about grantor.
+
+        Authorities is the authorities that was valid at time of request.
+
+        More information about grantor is provided separately from array with authoritites
+
+        Pagination information is valid for array with grantors and is ordered
+        ascending on name,
+      type: object
+      properties:
+        fullmaktsgivare:
+          type: array
+          items:
+            $ref: '#/components/schemas/Behorighetskontext'
+        page:
+          $ref: '#/components/schemas/PageMetadata'
+      required: [fullmaktsgivare, page]
